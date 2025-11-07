@@ -8,12 +8,13 @@ import { fromBase64Url } from "./helpers/base64.helper";
 import { CreateView } from "./components/CreateView";
 import { JoinView } from "./components/JoinView";
 import type { Group } from "./types";
+import { FestiveBackground } from './components/FestiveBackground';
 
 export default function SecretSanta() {
-  const gParam = useSearchParam("g");
+  const gParam = useSearchParam('g');
   const [group, setGroup] = React.useState<Group | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [whoAmI, setWhoAmI] = React.useState<string>("");
+  const [whoAmI, setWhoAmI] = React.useState<string>('');
 
   React.useEffect(() => {
     if (!gParam) {
@@ -23,13 +24,13 @@ export default function SecretSanta() {
     }
     const parsed = fromBase64Url<Group>(gParam);
     if (!parsed || !parsed.names?.length || !parsed.assignments) {
-      setError("Invalid or corrupted invite link.");
+      setError('Invalid or corrupted invite link.');
       setGroup(null);
       return;
     }
     for (const n of parsed.names) {
       if (!parsed.assignments[n]) {
-        setError("This invite link is missing assignments.");
+        setError('This invite link is missing assignments.');
         setGroup(null);
         return;
       }
@@ -40,6 +41,7 @@ export default function SecretSanta() {
 
   return (
     <Shell>
+      <FestiveBackground />
       <Card>
         {!group ? (
           <CreateView />

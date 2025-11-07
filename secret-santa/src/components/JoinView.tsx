@@ -1,11 +1,28 @@
 import React from 'react';
 import { Header } from './Header';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ConfettiBurst } from './ConfettiBurst';
 import type { Group } from '../types';
 
-// Choose your UX:
+// Toggle your UX:
 const USE_LONG_PRESS = true; // true = press & hold reveal, false = click + modal
 const HOLD_MS = 1200; // hold duration in ms for long-press
+
+// Minimal typing for the ConfettiBurst ref API
+type ConfettiApi = {
+  burst: () => void;
+  burstAt: (
+    x: number,
+    y: number,
+    opts?: {
+      count?: number;
+      duration?: number;
+      spreadDeg?: number;
+      power?: number;
+      gravity?: number;
+    }
+  ) => void;
+};
 
 export function JoinView({
   group,
@@ -23,6 +40,10 @@ export function JoinView({
   // Long-press progress (0..1)
   const [holdProgress, setHoldProgress] = React.useState(0);
   const rafRef = React.useRef<number | null>(null);
+
+  // Refs for confetti + button origin
+  const confettiRef = React.useRef<ConfettiApi | null>(null);
+  const holdBtnRef = React.useRef<HTMLButtonElement | null>(null);
 
   // Per-group keys
   const gToken = React.useMemo(
@@ -46,14 +67,13 @@ export function JoinView({
       const saved = localStorage.getItem(deviceClaimKey);
       if (saved) setClaimedName(saved);
     } catch {
-      // Handle error
+      // ignore
     }
   }, [deviceClaimKey]);
 
   // Enforce device claim; auto-reveal if already revealed on this device
   React.useEffect(() => {
     setConfirmOpen(false);
-    setRevealed(false);
     setHoldProgress(0);
 
     if (claimedName && whoAmI !== claimedName) {
@@ -64,6 +84,8 @@ export function JoinView({
     const name = claimedName ?? whoAmI;
     if (name && localStorage.getItem(revealKey(name)) === '1') {
       setRevealed(true);
+    } else {
+      setRevealed(false);
     }
   }, [whoAmI, claimedName, revealKey, setWhoAmI]);
 
@@ -71,7 +93,41 @@ export function JoinView({
   const isLockedToName = Boolean(claimedName);
   const myTarget = currentName ? group.assignments[currentName] : '';
 
-  // ---------- Click + modal path (only when USE_LONG_PRESS === false)
+  // ---------- Helpers ----------
+  function burstFromHoldButton() {
+    // Try to originate from the hold button center; fallback to screen center
+    const rect = holdBtnRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const cy = rect
+      ? rect.top + rect.height / 2
+      : Math.max(120, window.innerHeight * 0.5);
+
+    confettiRef.current?.burstAt(cx, cy, {
+      spreadDeg: 32, // upward cone width
+      power: 5.6, // initial speed
+      count: 160, // number of pieces
+    });
+  }
+
+  function finalizeReveal(name: string, origin: 'hold' | 'modal' = 'hold') {
+    setRevealed(true);
+    try {
+      localStorage.setItem(revealKey(name), '1');
+      localStorage.setItem(deviceClaimKey, name);
+      setClaimedName(name);
+    } catch {
+      // ignore
+    }
+
+    if (origin === 'hold') {
+      burstFromHoldButton();
+    } else {
+      // Modal flow: just burst from screen center
+      confettiRef.current?.burst();
+    }
+  }
+
+  // ---------- Click + modal path (only when USE_LONG_PRESS === false) ----------
   function startReveal() {
     const name = currentName;
     if (!name) return;
@@ -79,6 +135,8 @@ export function JoinView({
 
     if (localStorage.getItem(revealKey(name)) === '1') {
       setRevealed(true);
+      // fire a small center burst for feedback even on re-open
+      confettiRef.current?.burst();
       return;
     }
     setConfirmOpen(true);
@@ -88,17 +146,10 @@ export function JoinView({
     const name = currentName;
     if (!name) return;
     setConfirmOpen(false);
-    setRevealed(true);
-    try {
-      localStorage.setItem(revealKey(name), '1');
-      localStorage.setItem(deviceClaimKey, name);
-      setClaimedName(name);
-    } catch {
-      // Handle error
-    }
+    finalizeReveal(name, 'modal');
   }
 
-  // ---------- Long-press path (NO modal when USE_LONG_PRESS === true)
+  // ---------- Long-press path (NO modal when USE_LONG_PRESS === true) ----------
   const onHoldDown = () => {
     const name = currentName;
     if (!name) return;
@@ -106,6 +157,8 @@ export function JoinView({
 
     if (localStorage.getItem(revealKey(name)) === '1') {
       setRevealed(true);
+      // feedback on re-open
+      burstFromHoldButton();
       return;
     }
 
@@ -117,15 +170,7 @@ export function JoinView({
       const p = Math.min(1, (now - start) / HOLD_MS);
       setHoldProgress(p);
       if (p >= 1) {
-        // reveal + lock
-        setRevealed(true);
-        try {
-          localStorage.setItem(revealKey(name), '1');
-          localStorage.setItem(deviceClaimKey, name);
-          setClaimedName(name);
-        } catch {
-          // Handle error
-        }
+        finalizeReveal(name, 'hold');
         rafRef.current = null;
         return;
       }
@@ -167,7 +212,7 @@ export function JoinView({
               : undefined
           }
         >
-          <option value="">— select your name —</option>
+          <option value="">Select your name</option>
           {group.names.map((n) => (
             <option key={n} value={n}>
               {n}
@@ -189,6 +234,7 @@ export function JoinView({
             <div className="hint">Ready?</div>
             {USE_LONG_PRESS ? (
               <button
+                ref={holdBtnRef}
                 className="btn primary holdBtn"
                 onPointerDown={onHoldDown}
                 onPointerUp={onHoldUp}
@@ -199,7 +245,9 @@ export function JoinView({
                 <span className="holdLabel">Press &amp; hold to reveal</span>
                 <span
                   className="holdProgress"
-                  style={{ width: `${(holdProgress * 100).toFixed(1)}%` }}
+                  style={{
+                    width: `calc(${(holdProgress * 100).toFixed(1)}% + 2px)`,
+                  }}
                 />
               </button>
             ) : (
@@ -234,6 +282,9 @@ export function JoinView({
           onConfirm={confirmReveal}
         />
       )}
+
+      {/* Full-viewport confetti layer (rendered to <body> inside the component) */}
+      <ConfettiBurst ref={confettiRef} />
     </>
   );
 }
