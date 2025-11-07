@@ -8,7 +8,7 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["vite/client", "node"]  // <-- both here
+    "types": ["vite/client", "node"]
   },
   "files": [],
   "references": [
