@@ -15,21 +15,21 @@ type Particle = {
   rot: number;
   vr: number;
   color: string;
-  life: number;
+  life: number; // ms-ish countdown
 };
 type BurstOptions = {
   count: number;
   duration: number; // ms of life
   spreadDeg: number; // cone half-angle (degrees)
-  power: number; // initial speed multiplier
-  gravity: number; // downward acceleration per frame
+  power: number; // initial speed multiplier (unitless like before)
+  gravity: number; // downward acceleration per frame (unitless like before)
 };
 
 const DEFAULTS: BurstOptions = {
   count: 140,
   duration: 1600,
-  spreadDeg: 25, // narrower = tighter cone
-  power: 5.2, // speed
+  spreadDeg: 25,
+  power: 5.2,
   gravity: 0.12,
 };
 
@@ -43,10 +43,9 @@ export const ConfettiBurst = React.forwardRef<API, object>(
 
     React.useImperativeHandle(ref, () => ({
       burst: () => {
-        // center of screen, upward
         const cx = window.innerWidth / 2;
         const cy = Math.max(120, window.innerHeight * 0.5);
-        burstAt(cx, cy, undefined);
+        burstAt(cx, cy);
       },
       burstAt: (x, y, opts) => burstAt(x, y, opts),
     }));
@@ -69,6 +68,16 @@ export const ConfettiBurst = React.forwardRef<API, object>(
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
+    function hardClear() {
+      const c = canvasRef.current!;
+      const ctx = c.getContext('2d')!;
+      // Clear in identity space to avoid any transform artifacts
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.restore();
+    }
+
     function burstAt(x: number, y: number, opts?: Partial<BurstOptions>) {
       const c = canvasRef.current;
       if (!c) return;
@@ -88,12 +97,12 @@ export const ConfettiBurst = React.forwardRef<API, object>(
       ];
       const spreadRad = (cfg.spreadDeg * Math.PI) / 180;
       const centerAngle = -Math.PI / 2; // straight up
-      particlesRef.current = [];
+      const parts: Particle[] = [];
 
       for (let i = 0; i < cfg.count; i++) {
         const angle = centerAngle + (Math.random() - 0.5) * 2 * spreadRad;
         const speed = cfg.power * (0.6 + Math.random() * 0.8);
-        particlesRef.current.push({
+        parts.push({
           x,
           y,
           vx: Math.cos(angle) * speed,
@@ -106,6 +115,7 @@ export const ConfettiBurst = React.forwardRef<API, object>(
           life: cfg.duration + Math.random() * 400,
         });
       }
+      particlesRef.current = parts;
 
       if (!runningRef.current) {
         runningRef.current = true;
@@ -116,14 +126,19 @@ export const ConfettiBurst = React.forwardRef<API, object>(
     function loop(gravity: number) {
       const c = canvasRef.current!;
       const ctx = c.getContext('2d')!;
-      ctx.clearRect(0, 0, c.width, c.height);
 
+      // Clear frame
+      hardClear();
+
+      // Update & draw
       particlesRef.current.forEach((p) => {
-        p.life -= 16;
-        p.x += p.vx;
+        p.life -= 16; // countdown
+        p.x += p.vx; // simple Euler update (unitless like original)
         p.y += p.vy;
-        p.vy += gravity; // gravity pulls down over time
+        p.vy += gravity; // pull down
         p.rot += p.vr;
+
+        if (p.life <= 0) return; // dead; don't draw
 
         ctx.save();
         ctx.translate(p.x, p.y);
@@ -133,23 +148,33 @@ export const ConfettiBurst = React.forwardRef<API, object>(
         ctx.restore();
       });
 
-      particlesRef.current = particlesRef.current.filter(
-        (p) =>
-          p.life > 0 &&
-          p.y < window.innerHeight + 80 &&
-          p.x > -80 &&
-          p.x < window.innerWidth + 80
-      );
+      // Keep only living particles; once none left, stop & hard clear
+      particlesRef.current = particlesRef.current.filter((p) => p.life > 0);
 
       if (particlesRef.current.length > 0) {
         rafRef.current = requestAnimationFrame(() => loop(gravity));
       } else {
         runningRef.current = false;
+        // Final guaranteed clear and reset (removes everything)
+        hardClear();
+        if (rafRef.current) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
       }
     }
 
     React.useEffect(() => {
-      const onResize = () => runningRef.current && resize();
+      const onResize = () => {
+        if (!canvasRef.current) return;
+        // If running, keep canvas sized to viewport; if idle, ensure clean slate
+        if (runningRef.current) {
+          resize();
+        } else {
+          resize();
+          hardClear();
+        }
+      };
       window.addEventListener('resize', onResize);
       window.addEventListener('orientationchange', onResize);
       return () => {
