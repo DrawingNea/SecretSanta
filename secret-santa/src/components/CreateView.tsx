@@ -3,12 +3,11 @@ import { Header } from "./Header";
 import { Alert } from "./Alert";
 import { createDerangement } from "../helpers/derangement.helper";
 import { makeRng } from "../helpers/rng.helper";
-import { toBase64Url } from "../helpers/base64.helper";
-import type { Group } from "../types";
+import { toBase64Url } from '../helpers/base64.helper';
 
 export function CreateView() {
-  const [title, setTitle] = React.useState("Secret Santa 2025");
-  const [namesRaw, setNamesRaw] = React.useState("");
+  const [title, setTitle] = React.useState('Secret Santa 2025');
+  const [namesRaw, setNamesRaw] = React.useState('');
   const [inviteLink, setInviteLink] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -29,25 +28,34 @@ export function CreateView() {
   function generate() {
     setError(null);
     setInviteLink(null);
+
     const names = sanitizeNames(namesRaw);
     if (names.length < 3) {
-      setError("Please enter at least 3 distinct names.");
+      setError('Please enter at least 3 distinct names.');
       return;
     }
+
     try {
       const assignments = createDerangement(names, makeRng());
-      const group: Group = {
-        title: title.trim() || "Secret Santa",
-        names,
-        assignments,
-        createdAt: Date.now(),
+
+      // Keep the payload minimal; notes are added later by each person
+      const groupPayload: any = {
+        title: title.trim() || 'Secret Santa',
+        names, // string[]
+        assignments, // Record<giverName -> recipientName>
+        createdAt: Date.now(), // optional metadata
       };
-      const encoded = toBase64Url(group);
+
+      const encoded = toBase64Url(groupPayload);
       const url = new URL(window.location.href);
-      url.searchParams.set("g", encoded);
+      url.searchParams.set('g', encoded);
       setInviteLink(url.toString());
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Could not generate assignments. Try again.");
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Could not generate assignments. Try again.'
+      );
     }
   }
 
@@ -55,20 +63,26 @@ export function CreateView() {
     if (!inviteLink) return;
     try {
       await navigator.clipboard.writeText(inviteLink);
-      alert("Invite link copied to clipboard!");
+      alert('Invite link copied to clipboard!');
     } catch {
-      const ta = document.getElementById("invite-ta") as HTMLTextAreaElement | null;
+      const ta = document.getElementById(
+        'invite-ta'
+      ) as HTMLTextAreaElement | null;
       if (ta) {
         ta.select();
-        document.execCommand("copy");
-        alert("Copied!");
+        document.execCommand('copy');
+        alert('Copied!');
       }
     }
   }
 
   return (
     <>
-      <Header title="Secret Santa" subtitle="Create a group and share the invite link" />
+      <Header
+        title="Secret Santa"
+        subtitle="Create a group and share the invite link"
+      />
+
       <div className="row">
         <label className="label">Group title</label>
         <input
@@ -88,12 +102,18 @@ export function CreateView() {
           onChange={(e) => setNamesRaw(e.target.value)}
           rows={8}
         />
+        <p className="muted">
+          After you share the link, each person can add their own wishes/likes
+          on the join page.
+        </p>
       </div>
 
       {error && <Alert variant="error">{error}</Alert>}
 
       <div className="actions">
-        <button className="btn primary" onClick={generate}>Generate invite link</button>
+        <button className="btn primary" onClick={generate}>
+          Generate invite link
+        </button>
       </div>
 
       {inviteLink && (
@@ -101,13 +121,27 @@ export function CreateView() {
           <div className="divider" />
           <div className="row">
             <label className="label">Invite link</label>
-            <textarea id="invite-ta" className="input" rows={3} readOnly value={inviteLink} />
+            <textarea
+              id="invite-ta"
+              className="input"
+              rows={3}
+              readOnly
+              value={inviteLink}
+            />
           </div>
           <div className="actions">
-            <button className="btn" onClick={copyLink}>Copy link</button>
-            <a className="btn ghost" href={inviteLink}>Open link</a>
+            <button className="btn" onClick={copyLink}>
+              Copy link
+            </button>
+            <a className="btn ghost" href={inviteLink}>
+              Open link
+            </a>
           </div>
-          <p className="muted">Share this link with participants. They’ll open it, select their name, and see their match.</p>
+          <p className="muted">
+            Share this link with participants. They’ll open it, pick their name,
+            reveal their match, and fill in their own wishes/likes (saved via
+            Supabase or locally if not configured).
+          </p>
         </>
       )}
     </>

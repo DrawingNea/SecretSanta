@@ -12,6 +12,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.80.0",
     "buffer": "^6.0.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

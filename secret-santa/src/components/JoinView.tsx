@@ -3,12 +3,11 @@ import { Header } from './Header';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ConfettiBurst } from './ConfettiBurst';
 import type { Group } from '../types';
+import { getNotesAPI } from '../storage/notes.storage';
 
-// Toggle your UX:
-const USE_LONG_PRESS = true; // true = press & hold reveal, false = click + modal
-const HOLD_MS = 1200; // hold duration in ms for long-press
+const USE_LONG_PRESS = true;
+const HOLD_MS = 1200;
 
-// Minimal typing for the ConfettiBurst ref API
 type ConfettiApi = {
   burst: () => void;
   burstAt: (
@@ -37,41 +36,51 @@ export function JoinView({
   const [revealed, setRevealed] = React.useState(false);
   const [claimedName, setClaimedName] = React.useState<string | null>(null);
 
-  // Long-press progress (0..1)
+  // hold-to-reveal
   const [holdProgress, setHoldProgress] = React.useState(0);
   const rafRef = React.useRef<number | null>(null);
 
-  // Refs for confetti + button origin
+  // notes storage
+  const [notesApi, setNotesApi] = React.useState<Awaited<
+    ReturnType<typeof getNotesAPI>
+  > | null>(null);
+  const [myNote, setMyNote] = React.useState<string>('');
+  const [targetNote, setTargetNote] = React.useState<string>('');
+
+  // confetti
   const confettiRef = React.useRef<ConfettiApi | null>(null);
   const holdBtnRef = React.useRef<HTMLButtonElement | null>(null);
 
-  // Per-group keys
+  // group token is our "group_id"
   const gToken = React.useMemo(
     () => new URLSearchParams(location.search).get('g') ?? '',
     []
   );
   const deviceClaimKey = React.useMemo(
-    () => `ss:deviceClaim:${gToken}`, // device is bound to this name for the group
+    () => `ss:deviceClaim:${gToken}`,
     [gToken]
   );
-
-  // Helper to build per-name reveal key
   const revealKey = React.useCallback(
     (name: string) => `ss:revealed:${gToken}:${name}`,
     [gToken]
   );
 
-  // Load device claim on mount
+  // hydrate storage API
+  React.useEffect(() => {
+    getNotesAPI().then(setNotesApi);
+  }, []);
+
+  // load device claim
   React.useEffect(() => {
     try {
       const saved = localStorage.getItem(deviceClaimKey);
       if (saved) setClaimedName(saved);
     } catch {
-      // ignore
+      /* ignore */
     }
   }, [deviceClaimKey]);
 
-  // Enforce device claim; auto-reveal if already revealed on this device
+  // sync revealed state & lock
   React.useEffect(() => {
     setConfirmOpen(false);
     setHoldProgress(0);
@@ -82,30 +91,69 @@ export function JoinView({
     }
 
     const name = claimedName ?? whoAmI;
-    if (name && localStorage.getItem(revealKey(name)) === '1') {
+    if (name && localStorage.getItem(revealKey(name)) === '1')
       setRevealed(true);
-    } else {
-      setRevealed(false);
-    }
+    else setRevealed(false);
   }, [whoAmI, claimedName, revealKey, setWhoAmI]);
 
   const currentName = claimedName ?? whoAmI;
   const isLockedToName = Boolean(claimedName);
-  const myTarget = currentName ? group.assignments[currentName] : '';
 
-  // ---------- Helpers ----------
+  const myTargetName = currentName ? group.assignments[currentName] : '';
+
+  // Load my own note when I change selection (or when storage ready)
+  React.useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!notesApi || !currentName) {
+        setMyNote('');
+        return;
+      }
+      const note = await notesApi.getNote(gToken, currentName);
+      if (!cancelled) setMyNote(note || '');
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [notesApi, currentName, gToken]);
+
+  // Debounced autosave for myNote
+  React.useEffect(() => {
+    if (!notesApi || !currentName) return;
+    const h = setTimeout(() => {
+      notesApi.upsertNote(gToken, currentName, myNote.trim());
+    }, 400);
+    return () => clearTimeout(h);
+  }, [notesApi, gToken, currentName, myNote]);
+
+  // Fetch target's note when revealed (or when target changes)
+  React.useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!notesApi || !revealed || !myTargetName) {
+        setTargetNote('');
+        return;
+      }
+      const note = await notesApi.getNote(gToken, myTargetName);
+      if (!cancelled) setTargetNote(note || '');
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [notesApi, gToken, revealed, myTargetName]);
+
   function burstFromHoldButton() {
-    // Try to originate from the hold button center; fallback to screen center
     const rect = holdBtnRef.current?.getBoundingClientRect();
     const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
     const cy = rect
       ? rect.top + rect.height / 2
       : Math.max(120, window.innerHeight * 0.5);
-
     confettiRef.current?.burstAt(cx, cy, {
-      spreadDeg: 32, // upward cone width
-      power: 5.6, // initial speed
-      count: 160, // number of pieces
+      spreadDeg: 32,
+      power: 5.6,
+      count: 160,
     });
   }
 
@@ -116,32 +164,24 @@ export function JoinView({
       localStorage.setItem(deviceClaimKey, name);
       setClaimedName(name);
     } catch {
-      // ignore
+      /* ignore */
     }
-
-    if (origin === 'hold') {
-      burstFromHoldButton();
-    } else {
-      // Modal flow: just burst from screen center
-      confettiRef.current?.burst();
-    }
+    if (origin === 'hold') burstFromHoldButton();
+    else confettiRef.current?.burst();
   }
 
-  // ---------- Click + modal path (only when USE_LONG_PRESS === false) ----------
+  // click + modal (if you ever switch off long-press)
   function startReveal() {
     const name = currentName;
     if (!name) return;
     if (claimedName && name !== claimedName) return;
-
     if (localStorage.getItem(revealKey(name)) === '1') {
       setRevealed(true);
-      // fire a small center burst for feedback even on re-open
       confettiRef.current?.burst();
       return;
     }
     setConfirmOpen(true);
   }
-
   function confirmReveal() {
     const name = currentName;
     if (!name) return;
@@ -149,7 +189,7 @@ export function JoinView({
     finalizeReveal(name, 'modal');
   }
 
-  // ---------- Long-press path (NO modal when USE_LONG_PRESS === true) ----------
+  // long-press
   const onHoldDown = () => {
     const name = currentName;
     if (!name) return;
@@ -157,14 +197,11 @@ export function JoinView({
 
     if (localStorage.getItem(revealKey(name)) === '1') {
       setRevealed(true);
-      // feedback on re-open
       burstFromHoldButton();
       return;
     }
-
     setHoldProgress(0);
     const start = performance.now();
-
     const tick = () => {
       const now = performance.now();
       const p = Math.min(1, (now - start) / HOLD_MS);
@@ -176,21 +213,19 @@ export function JoinView({
       }
       rafRef.current = requestAnimationFrame(tick);
     };
-
     rafRef.current = requestAnimationFrame(tick);
   };
-
   const onHoldUp = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
-    setHoldProgress(0); // reset fill
+    setHoldProgress(0);
   };
-
-  React.useEffect(() => {
-    return () => {
+  React.useEffect(
+    () => () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
+    },
+    []
+  );
 
   return (
     <>
@@ -212,7 +247,7 @@ export function JoinView({
               : undefined
           }
         >
-          <option value="">Select your name</option>
+          <option value="">— select your name —</option>
           {group.names.map((n) => (
             <option key={n} value={n}>
               {n}
@@ -226,6 +261,27 @@ export function JoinView({
           </div>
         )}
       </div>
+
+      {/* --- NEW: self profile editor (per person, per group) --- */}
+      {currentName && (
+        <div className="row">
+          <label className="label">Write a note to your Secret Santa</label>
+          <textarea
+            className="input"
+            rows={4}
+            placeholder="e.g., dark chocolate, cozy socks, board games, A4 sketchbook…"
+            value={myNote}
+            onChange={(e) => setMyNote(e.target.value)}
+          />
+          <p className="muted">
+            Saved{' '}
+            {import.meta.env.VITE_SUPABASE_URL
+              ? 'securely for this group'
+              : 'on this device'}{' '}
+            as you type.
+          </p>
+        </div>
+      )}
 
       {currentName && !revealed && (
         <>
@@ -267,7 +323,15 @@ export function JoinView({
           <div className="divider" />
           <div className="revealBox">
             <div className="hint">🎁 Your Secret Santa assignment:</div>
-            <div className="big">{myTarget}</div>
+            <div className="big">{myTargetName}</div>
+
+            {/* Recipient's note (if they filled it) */}
+            {targetNote && (
+              <div className="wishBlock">
+                <div className="wishTitle">Note from {myTargetName}:</div>
+                <div className="wishText">{targetNote}</div>
+              </div>
+            )}
           </div>
           <p className="muted">
             Shhh… Don’t share this screen. Everyone only sees their own match.
@@ -283,7 +347,6 @@ export function JoinView({
         />
       )}
 
-      {/* Full-viewport confetti layer (rendered to <body> inside the component) */}
       <ConfettiBurst ref={confettiRef} />
     </>
   );
